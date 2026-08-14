@@ -1,0 +1,45 @@
+# 自动同步作者仓库的最新代码到本 fork
+# 每 6 小时检查一次；作者有新提交时，自动合并过来并触发编译
+name: 自动同步作者更新
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # 每 6 小时跑一次（UTC 时间）
+  workflow_dispatch:         # 也可以手动点按钮触发
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取本仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 同步作者更新
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -e
+          git config user.name "operit2-sync-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/AAswordman/Operit2.git
+          git fetch upstream main
+          BEFORE=$(git rev-parse HEAD)
+          git merge --no-edit -X theirs upstream/main || {
+            echo "::error::同步冲突，请人工检查本仓库 main 分支"
+            exit 1
+          }
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" != "$AFTER" ]; then
+            git push origin main
+            echo "检测到作者新更新，开始触发自动编译..."
+            gh workflow run build-daily.yml --ref main
+          else
+            echo "作者没有新更新，跳过编译"
+          fi

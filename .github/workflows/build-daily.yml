@@ -1,0 +1,85 @@
+# 自动编译 Operit2 Windows CLI
+# 触发方式：
+#   1. 代码推送到 main 时自动触发（首次推送就会跑）
+#   2. 自动同步工作流检测到作者更新后触发
+#   3. 在 Actions 页面手动点击 Run workflow
+# 编译产物在本次运行的 Artifacts 里下载
+name: 自动编译 Windows 版
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      RUSTFLAGS: -Awarnings
+      RUST_TOOLCHAIN_VERSION: 1.95.0
+      FVM_VERSION: 4.1.2
+      TYPESCRIPT_VERSION: 5.9.3
+      WASM_BINDGEN_VERSION: 0.2.122
+      WASI_SDK_VERSION: "20.0"
+      QUICKJS_WASM_SYS_WASI_SDK_MAJOR_VERSION: 20
+      QUICKJS_WASM_SYS_WASI_SDK_MINOR_VERSION: 0
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装 FVM
+        shell: pwsh
+        run: |
+          dart pub global activate fvm $env:FVM_VERSION
+          "$env:APPDATA\Pub\Cache\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: 安装项目指定的 Flutter SDK
+        working-directory: apps/flutter/app
+        shell: pwsh
+        run: fvm install --skip-pub-get
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: 安装 LLVM
+        shell: pwsh
+        run: choco install llvm --no-progress --limit-output --yes
+
+      - name: 检查编译环境
+        shell: pwsh
+        run: python tools/build_scripts/check_environment.py --products cli --cli-arches x86_64 --github-runner
+
+      - name: 构建网页界面资源
+        shell: pwsh
+        run: python tools/build_scripts/build_flutter_web_access.py --base-href /
+
+      - name: 编译并打包 Windows CLI
+        shell: pwsh
+        run: python tools/build_scripts/build_cli_windows.py --arches x86_64
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-cli-windows-x86_64-run${{ github.run_id }}
+          path: tools/release/dist/operit2-cli-windows-*.zip
+          if-no-files-found: error
+          retention-days: 14
